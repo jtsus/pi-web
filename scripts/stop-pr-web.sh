@@ -26,8 +26,9 @@ if [ "$PID" = "$$" ] || [ "$PID" = "$PPID" ]; then
 fi
 
 CMD="$(ps -p "$PID" -o args= 2>/dev/null || true)"
+# Next renames itself ("next-server (v16.3.8)") once it is serving.
 case "$CMD" in
-  *"next start"*) ;;
+  *"next start"*|*"next-server"*|*".bin/next"*) ;;
   *) echo "Pid $PID does not look like the Pi Web server ($CMD); refusing." >&2; exit 1 ;;
 esac
 

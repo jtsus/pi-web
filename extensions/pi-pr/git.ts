@@ -166,14 +166,20 @@ export async function createWorktree(
 }
 
 /**
- * Move the checkout's uncommitted work into `worktreePath`.
+ * Move the given uncommitted paths from the checkout into `worktreePath`.
  *
  * `git stash` is repository-wide, so the changes can be stashed in the main
  * checkout and applied in the worktree, leaving the main checkout clean while
- * nothing is lost. Untracked files travel too (`-u`).
+ * nothing is lost. The pathspec keeps unrelated work in place: a session must
+ * never sweep up files it did not touch.
  */
-export async function moveUncommittedWork(repoRoot: string, worktreePath: string): Promise<boolean> {
-  const stashed = await tryGit(repoRoot, ["stash", "push", "-u", "-m", "pi-pr ship"]);
+export async function moveUncommittedWork(
+  repoRoot: string,
+  worktreePath: string,
+  paths: readonly string[],
+): Promise<boolean> {
+  if (!paths.length) return true;
+  const stashed = await tryGit(repoRoot, ["stash", "push", "-u", "-m", "pi-pr ship", "--", ...paths]);
   if (stashed === null) return false;
   const applied = await tryGit(worktreePath, ["stash", "apply"]);
   if (applied === null) {
@@ -185,13 +191,56 @@ export async function moveUncommittedWork(repoRoot: string, worktreePath: string
   return true;
 }
 
-export async function commitAll(repoRoot: string, message: string): Promise<string | null> {
+/** Absolute paths → repository-relative paths, sorted and de-duplicated. */
+export function repoRelativePaths(root: string, absolutePaths: readonly string[]): string[] {
+  const prefix = `${resolve(root)}/`;
+  const relatives = new Set<string>();
+  for (const candidate of absolutePaths) {
+    const absolute = resolve(candidate);
+    if (absolute === resolve(root)) continue;
+    if (!absolute.startsWith(prefix)) continue;
+    relatives.add(absolute.slice(prefix.length));
+  }
+  return [...relatives].sort();
+}
+
+/**
+ * The uncommitted paths a session may ship: everything when it has no recorded
+ * scope, otherwise the paths it touched plus what changed since its baseline.
+ */
+export function scopedDirtyPaths(
+  dirtyPaths: readonly string[],
+  allowed: readonly string[] | null,
+): string[] {
+  if (allowed === null) return [...dirtyPaths];
+  const allowedSet = new Set(allowed);
+  return dirtyPaths.filter((path) => allowedSet.has(path));
+}
+
+/**
+ * Commit the given paths (all of them when `paths` is empty). Committing a
+ * pathspec is what keeps a session's PR free of other people's work.
+ */
+export async function commitAll(
+  repoRoot: string,
+  message: string,
+  paths: readonly string[] = [],
+): Promise<string | null> {
   const staged = (await tryGit(repoRoot, ["status", "--porcelain=v1"]))?.trim();
   if (!staged) return null;
-  await runGit(repoRoot, ["add", "-A"]);
+  if (paths.length) await runGit(repoRoot, ["add", "-A", "--", ...paths]);
+  else await runGit(repoRoot, ["add", "-A"]);
+  const hasStaged = (await tryGit(repoRoot, ["diff", "--cached", "--name-only"]))?.trim();
+  if (!hasStaged) return null;
   await runGit(repoRoot, ["commit", "--no-verify", "-m", message]);
   const sha = (await tryGit(repoRoot, ["rev-parse", "HEAD"]))?.trim();
   return sha || null;
+}
+
+/** True when origin already has this branch, so a pull request can be opened for it. */
+export async function branchPublished(repoRoot: string, branch: string): Promise<boolean> {
+  const ref = await tryGit(repoRoot, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${branch}`]);
+  return ref !== null;
 }
 
 export async function pushBranch(repoRoot: string, branch: string): Promise<void> {

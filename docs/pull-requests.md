@@ -19,6 +19,12 @@ An agent that changes code and then stops is an agent whose work is one
   request;
 - work that started on `main` is moved sideways into its own worktree and branch
   instead of being pushed to `main`;
+- only files the session touched (or that became dirty after it started) are
+  ever committed, so your own uncommitted work in the same checkout is never
+  swept into an agent PR;
+- shipping looks inside the worktrees the session created, so a change made in
+  a worktree still gets its pull request even though the chat's directory is
+  the clean main checkout;
 - questions and read-only investigations are left alone, because they produce
   no changes to ship.
 
@@ -56,7 +62,7 @@ three tools:
 
 | Tool | Purpose |
 |---|---|
-| `pr_worktree` | Create the branch and worktree for a change before files are edited. |
+| `pr_worktree` | Create the branch and worktree for a change before files are edited. The worktree is recorded in the session as a `pi.pr.worktree` entry so `pr_ship` can find it later. |
 | `pr_ship` | Commit, push, and open (or reuse) the pull request. On `main` it first moves the work into its own worktree. |
 | `pr_status` | Repository, branch, uncommitted files, unpushed commits, and the chat's pull requests. |
 
@@ -115,5 +121,8 @@ process for that session.
 - The merge button squashes. `POST /api/prs/<number>/merge` also accepts
   `merge` and `rebase`.
 - The guard inspects the session's working directory and the worktrees it
-  created; a branch pushed somewhere else by hand is only caught once its
-  worktree is recorded (or by `pr_status`).
+  created. A branch pushed by hand from somewhere else is only recognised when
+  it is named in a `pr_ship` call (`branch` argument) or recorded in the
+  session.
+- A file that was already dirty when the session started is treated as yours,
+  not the agent's: the guard will not insist on shipping it.

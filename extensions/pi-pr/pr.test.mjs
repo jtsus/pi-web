@@ -7,9 +7,16 @@ const {
   branchFromTitle,
   isProtectedBranch,
   parsePorcelainPaths,
+  repoRelativePaths,
+  scopedDirtyPaths,
   worktreePathFor,
 } = await jiti.import("./git.ts");
-const { isPushToProtectedBranch, guardMessage } = await jiti.import("./index.ts");
+const {
+  allowedPathsFor,
+  guardMessage,
+  isPushToProtectedBranch,
+  pathsFromToolCall,
+} = await jiti.import("./index.ts");
 const { parseRepoRemote, tokenFromCredentialStore } = await jiti.import("./github.ts");
 
 test("parses porcelain -z records into paths", () => {
@@ -68,4 +75,37 @@ test("the extension resolves github remotes and tokens like the web app", () => 
   assert.equal(parseRepoRemote("https://example.com/onlyone"), null);
   assert.equal(tokenFromCredentialStore("https://user: ghp_x@github.com"), null);
   assert.equal(tokenFromCredentialStore("https://user:ghp_x@github.com"), "ghp_x");
+});
+
+
+
+test("only the session's paths are shipped, never other work in the checkout", () => {
+  const scope = {
+    touched: ["/repo/src/app.ts", "/repo/notes/new.md"],
+    baseline: new Set(["apps/api/app/main.py"]),
+    baselineRoot: "/repo",
+  };
+  const currentDirty = ["src/app.ts", "notes/new.md", "apps/api/app/main.py", "unrelated.txt"];
+  // touched files plus anything that became dirty after the session started.
+  assert.deepEqual(allowedPathsFor(scope, "/repo", currentDirty), ["notes/new.md", "src/app.ts", "unrelated.txt"]);
+  // The file that was already dirty at session start is not the session's to commit.
+  assert.deepEqual(
+    scopedDirtyPaths(currentDirty, allowedPathsFor(scope, "/repo", currentDirty)),
+    ["src/app.ts", "notes/new.md", "unrelated.txt"],
+  );
+  // A different checkout (a fresh worktree) has no baseline: everything there is ours.
+  assert.equal(allowedPathsFor(scope, "/repo-worktrees/x", currentDirty), null);
+});
+
+test("tool call arguments name the files a session wrote", () => {
+  assert.deepEqual(pathsFromToolCall("write", { path: "/repo/a.ts", content: "x" }), ["/repo/a.ts"]);
+  assert.deepEqual(pathsFromToolCall("edit", { file_path: "/repo/b.ts" }), ["/repo/b.ts"]);
+  assert.deepEqual(pathsFromToolCall("patch", { paths: ["/repo/c", "/repo/d"] }), ["/repo/c", "/repo/d"]);
+  assert.deepEqual(pathsFromToolCall("bash", { command: "ls" }), []);
+  assert.deepEqual(pathsFromToolCall("read", null), []);
+});
+
+test("absolute paths inside the repository become relative ones", () => {
+  assert.deepEqual(repoRelativePaths("/repo", ["/repo/b.ts", "/repo/a.ts", "/repo/a.ts"]), ["a.ts", "b.ts"]);
+  assert.deepEqual(repoRelativePaths("/repo", ["/other/x.ts", "/repo"]), []);
 });
