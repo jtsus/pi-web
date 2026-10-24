@@ -100,7 +100,7 @@ showing a raw failure.
 
 ## Running this fork
 
-The published `@agegr/pi-web` ships a prebuilt `.next` and no source, so this
+The published `@misterkip/pi-web` ships a prebuilt `.next` and no source, so this
 fork is deployed as a normal build of this repository:
 
 ```bash
@@ -109,7 +109,7 @@ npm run build
 npm start          # http://127.0.0.1:30141
 ```
 
-`main` mirrors `agegr/pi-web`; the pull request work lives on
+`main` mirrors `jtsus/pi-web`; the pull request work lives on
 `pull-requests`, which is this repository's default branch. To take upstream
 changes:
 
