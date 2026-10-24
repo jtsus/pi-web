@@ -293,6 +293,7 @@ export const zhTWLocale: LocalePlugin = {
     "prs.loading": "載入中…",
     "prs.loadFailed": "無法載入該拉取請求。",
     "prs.emptySession": "本對話還沒有拉取請求。修改程式碼的代理會在結束前建立一個。",
+    "prs.noRepo": "此處沒有 GitHub 儲存庫。請開啟 origin 位於 github.com 的專案。",
     "prs.emptyAll": "該儲存庫沒有開啟的拉取請求。",
     "prs.hint": "已合併或關閉的拉取請求會離開此列表。",
     "prs.openOnGitHub": "在 GitHub 開啟",

@@ -293,6 +293,7 @@ export const enLocale: LocalePlugin = {
     "prs.loading": "Loading…",
     "prs.loadFailed": "Could not load this pull request.",
     "prs.emptySession": "No pull requests from this chat yet. An agent that changes code opens one before it finishes.",
+    "prs.noRepo": "No GitHub repository here. Open a project whose origin is on github.com.",
     "prs.emptyAll": "No open pull requests in this repository.",
     "prs.hint": "Merged and closed pull requests leave this list.",
     "prs.openOnGitHub": "Open on GitHub",

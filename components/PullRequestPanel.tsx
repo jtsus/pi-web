@@ -401,7 +401,7 @@ export function PullRequestList({
         ))}
         {!prs.length && !error ? (
           <div style={{ padding: "16px 12px", fontSize: 12, color: "var(--text-dim)", lineHeight: 1.7 }}>
-            {scope === "session" ? t("prs.emptySession") : t("prs.emptyAll")}
+            {repo ? (scope === "session" ? t("prs.emptySession") : t("prs.emptyAll")) : t("prs.noRepo")}
           </div>
         ) : null}
         {loading && !prs.length ? (

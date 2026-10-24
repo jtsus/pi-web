@@ -293,6 +293,7 @@ export const zhCNLocale: LocalePlugin = {
     "prs.loading": "加载中…",
     "prs.loadFailed": "无法加载该拉取请求。",
     "prs.emptySession": "本对话还没有拉取请求。修改代码的代理会在结束前创建一个。",
+    "prs.noRepo": "此处没有 GitHub 仓库。请打开 origin 位于 github.com 的项目。",
     "prs.emptyAll": "该仓库没有打开的拉取请求。",
     "prs.hint": "已合并或关闭的拉取请求会离开此列表。",
     "prs.openOnGitHub": "在 GitHub 打开",

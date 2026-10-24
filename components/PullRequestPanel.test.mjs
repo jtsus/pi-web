@@ -69,6 +69,11 @@ test("an empty scope explains itself instead of looking broken", () => {
   assert.match(all, /No open pull requests in this repository/);
 });
 
+test("a project without a GitHub remote says so", () => {
+  const html = list({ prs: [], repo: null });
+  assert.match(html, /No GitHub repository here/);
+});
+
 test("a token or repository problem is shown in the list, not swallowed", () => {
   const html = list({ prs: [], error: "No GitHub token found. Add one to ~/.pi-git-credentials or set GITHUB_TOKEN." });
   assert.match(html, /No GitHub token found/);
