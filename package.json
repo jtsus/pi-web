@@ -1,6 +1,6 @@
 {
   "name": "@misterkip/pi-web",
-  "version": "0.13.1",
+  "version": "0.13.2",
   "description": "Web UI for the pi coding agent",
   "homepage": "https://github.com/jtsus/pi-web#readme",
   "repository": {
@@ -31,6 +31,7 @@
     "!.next/dev",
     "!.next/**/*.js.map",
     "public",
+    "extensions",
     "next.config.ts",
     "package.json"
   ],
