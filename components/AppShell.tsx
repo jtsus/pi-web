@@ -2044,9 +2044,11 @@ export function AppShell() {
       setActiveTopPanel(null);
       setMobileToolbarMoreOpen(false);
     }
+    // The button toggles the panel when the list is already the active tab.
+    const alreadyShowing = rightPanelOpen && activeFileTabId === PR_TAB_ID;
     setActiveFileTabId(PR_TAB_ID);
-    setRightPanelOpen(true);
-  }, [isMobile]);
+    setRightPanelOpen(!alreadyShowing);
+  }, [activeFileTabId, isMobile, rightPanelOpen]);
 
   const renderPullRequestsToggle = (mobile: boolean) => {
     const covered = mobile && isNarrowMobile && mobileToolbarMoreOpen;
