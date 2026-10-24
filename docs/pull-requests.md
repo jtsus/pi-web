@@ -100,19 +100,24 @@ showing a raw failure.
 
 ## Running this fork
 
-The published `@agegr/pi-web` ships a prebuilt `.next` and no source, so a local
-build is a separate process on its own port:
+The published `@agegr/pi-web` ships a prebuilt `.next` and no source, so this
+fork is deployed as a normal build of this repository:
 
 ```bash
 npm install
 npm run build
-scripts/start-pr-web.sh     # http://0.0.0.0:30143 by default
-scripts/stop-pr-web.sh
+npm start          # http://127.0.0.1:30141
 ```
 
-Both servers read the same `~/.pi/agent`, so sessions, settings and models are
-shared. Do not run the same session in both at once: each has its own agent
-process for that session.
+`main` mirrors `agegr/pi-web`; the pull request work lives on
+`pull-requests`, which is this repository's default branch. To take upstream
+changes:
+
+```bash
+git fetch upstream
+git rebase upstream/main
+npm install && npm run build
+```
 
 ## Limitations
 
