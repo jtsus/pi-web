@@ -2,6 +2,14 @@
 
 [中文文档](./docs/README.zh-CN.md) | [日本語](./docs/README.ja.md) | [Русский](./docs/README.ru.md)
 
+> **This is a fork with pull requests.** Upstream Pi Web has no UI-slot or
+> plugin system and keeps Git-client features out of scope, so the PR tab lives
+> here. A **PRs** tab in the right panel lists the pull requests the current
+> chat's agent opened, with description, files, checks, a GitHub link, and a
+> merge button; the bundled `pi-pr` extension makes agents ship their work as a
+> branch plus pull request instead of leaving it uncommitted. See
+> [Pull requests in Pi Web](./docs/pull-requests.md).
+
 Local browser UI for the [pi coding agent](https://github.com/earendil-works/pi). Pi Web uses the same local configuration and session files as pi, so you can browse and resume conversations, run agent turns, configure models and resources, and inspect project files from a browser.
 
 **[Try the interactive demo →](https://agegr.github.io/pi-web/)** The real Pi Web UI runs entirely in your browser, with sample sessions, files and models. There is nothing to install; replies are pre-written and no model is called.
@@ -14,6 +22,7 @@ Local browser UI for the [pi coding agent](https://github.com/earendil-works/pi)
 - **Two ways to branch**: **New session** creates an independent session file from an earlier message; **Edit from here** creates a branch inside the current session.
 - **Project file tools**: browse and upload files, inspect Git diffs, and preview source, Markdown, images, audio, PDFs, and DOCX files with automatic refresh.
 - **Git worktrees**: switch checkouts from the sidebar while keeping sessions from the same repository grouped together.
+- **Pull requests**: a pinned **PRs** tab lists the pull requests this chat's agent opened (or every open PR of the project), with diffs, checks, a GitHub link, and merge.
 - **Web-based configuration**: manage provider login and API keys, models, model tests, plugin packages, and skills without leaving Pi Web.
 - **English, Simplified Chinese, and Traditional Chinese UI**: Pi Web follows the browser language initially and provides a language switcher in the top bar.
 

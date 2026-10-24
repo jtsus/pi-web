@@ -9,7 +9,9 @@ export interface Tab {
   id: string;
   label: string;
   filePath: string;
-  kind?: "terminal" | "agent";
+  kind?: "terminal" | "agent" | "prs";
+  /** Pinned tabs (the pull request list) stay put and have no close button. */
+  pinned?: boolean;
   closing?: boolean;
   sourceSessionId?: string | null;
   initialDisplayMode?: FileViewerDisplayMode;
@@ -135,6 +137,11 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <rect x="5" y="7" width="14" height="11" rx="2" /><path d="M9 11h.01M15 11h.01M9 15h6M12 7V4M10 4h4" />
                 </svg>
+              ) : tab.kind === "prs" ? (
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <circle cx="6" cy="18" r="2.5" /><circle cx="6" cy="6" r="2.5" /><circle cx="18" cy="18" r="2.5" />
+                  <path d="M6 8.5v7M12 6h3a3 3 0 0 1 3 3v6.5" />
+                </svg>
               ) : getFileIcon(tab.label, 13)}
             </span>
             <span
@@ -148,6 +155,7 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
             >
               {tab.label}
             </span>
+            {tab.pinned ? null : (
             <button
               disabled={tab.closing}
               onClick={(e) => { e.stopPropagation(); onCloseTab(tab.id); }}
@@ -173,6 +181,7 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
                 <line x1="8" y1="2" x2="2" y2="8" />
               </svg>
             </button>
+            )}
           </div>
         );
       })}

@@ -1,0 +1,71 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { createJiti } from "jiti";
+
+const jiti = createJiti(import.meta.url);
+const {
+  branchFromTitle,
+  isProtectedBranch,
+  parsePorcelainPaths,
+  worktreePathFor,
+} = await jiti.import("./git.ts");
+const { isPushToProtectedBranch, guardMessage } = await jiti.import("./index.ts");
+const { parseRepoRemote, tokenFromCredentialStore } = await jiti.import("./github.ts");
+
+test("parses porcelain -z records into paths", () => {
+  const output = " M src/app.ts\0?? notes/new file.md\0A  added.txt\0";
+  assert.deepEqual(parsePorcelainPaths(output), ["src/app.ts", "notes/new file.md", "added.txt"]);
+  assert.deepEqual(parsePorcelainPaths(""), []);
+});
+
+test("branch names stay short and git-safe", () => {
+  assert.equal(branchFromTitle("Fix the login page!", "ab12"), "agent/fix-the-login-page-ab12");
+  assert.equal(branchFromTitle(undefined, "zz"), "agent/work-zz");
+  assert.match(branchFromTitle("Ünïcode ünd spaces", ""), /^agent\/n-code-nd-spaces-[a-z0-9]+$/);
+  assert.equal(branchFromTitle("x".repeat(300), "s").length <= 56, true);
+});
+
+test("main, master, HEAD and the base branch are protected", () => {
+  assert.equal(isProtectedBranch("main", "main"), true);
+  assert.equal(isProtectedBranch("master", "main"), true);
+  assert.equal(isProtectedBranch("HEAD", "main"), true);
+  assert.equal(isProtectedBranch("trunk", "trunk"), true);
+  assert.equal(isProtectedBranch("agent/fix", "main"), false);
+});
+
+test("worktrees sit next to the repository, one folder per branch", () => {
+  assert.equal(worktreePathFor("/home/u/repo", "agent/fix-it"), "/home/u/repo-worktrees/agent-fix-it");
+  assert.equal(worktreePathFor("/home/u/repo", "a/b c"), "/home/u/repo-worktrees/a-b-c");
+});
+
+test("only pushes to protected branches are blocked", () => {
+  assert.equal(isPushToProtectedBranch("git push origin main"), true);
+  assert.equal(isPushToProtectedBranch("git push -u origin master"), true);
+  assert.equal(isPushToProtectedBranch("cd repo && git push origin main --force"), true);
+  assert.equal(isPushToProtectedBranch("git push origin agent/fix-main-title"), false);
+  assert.equal(isPushToProtectedBranch("git status"), false);
+  assert.equal(isPushToProtectedBranch("git commit -m 'remove main'"), false);
+  assert.equal(isPushToProtectedBranch("echo git push origin maintenance"), false);
+});
+
+test("the guard message names every reason and the way out", () => {
+  const message = guardMessage({
+    needsShipping: true,
+    reasons: ["2 uncommitted file(s) in /repo: a.ts, b.ts", "branch agent/x has no open pull request"],
+  });
+  assert.match(message, /2 uncommitted file/);
+  assert.match(message, /no open pull request/);
+  assert.match(message, /pr_ship/);
+  assert.match(message, /pull request URL/);
+});
+
+test("the extension resolves github remotes and tokens like the web app", () => {
+  assert.deepEqual(parseRepoRemote("git@github.com:jtsus/phone-order.git"), {
+    repo: "jtsus/phone-order",
+    host: "github.com",
+  });
+  assert.deepEqual(parseRepoRemote("https://example.com/not/github"), { repo: "not/github", host: "example.com" });
+  assert.equal(parseRepoRemote("https://example.com/onlyone"), null);
+  assert.equal(tokenFromCredentialStore("https://user: ghp_x@github.com"), null);
+  assert.equal(tokenFromCredentialStore("https://user:ghp_x@github.com"), "ghp_x");
+});
