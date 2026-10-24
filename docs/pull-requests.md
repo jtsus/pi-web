@@ -71,10 +71,17 @@ Two guards enforce the protocol:
 - `bash`/`powershell` calls that would `git push` to `main`/`master` are blocked
   with a pointer to `pr_ship`.
 - Before a run settles, the extension inspects the checkout. Uncommitted files,
-  commits that are not on `origin/<base>`, a pushed branch without a pull
-  request, or a branch whose pull request failed to open each append a reminder
-  and continue the run. Two reminders per run, then it stops, so a run cannot
-  loop.
+  commits the branch has not pushed, a pushed branch without a pull request, or
+  a branch whose pull request failed to open each append a reminder and continue
+  the run. Two reminders per run, then it stops, so a run cannot loop.
+
+"Shipped" means the branch is on `origin`: a feature branch is measured against
+its own upstream, not against `origin/<base>`, because its commits are not on the
+default branch until the pull request merges. Any pull request for the branch
+settles it, merged or closed: a merged one reached the default branch, and a
+closed one was a reviewer's decision. A gap identical to the one already
+reminded about is not repeated in a later run, so a session cannot be talked into
+opening a second pull request for work that already has one.
 
 `/prs` prints the same status in the terminal UI; `/ship` ships on demand.
 

@@ -54,8 +54,10 @@ export interface RepoState {
   headSha: string;
   /** Default branch name, e.g. "main". */
   base: string;
-  /** Commits on HEAD that origin/<base> does not have. */
+  /** Commits on HEAD that the branch's own remote ref has not seen yet. */
   ahead: number;
+  /** The ref `ahead` was measured against, e.g. "origin/agent/fix" or "origin/main". */
+  aheadOf: string;
   dirtyPaths: string[];
   originUrl: string | null;
 }
@@ -87,6 +89,38 @@ async function resolveBaseBranch(repoRoot: string): Promise<string> {
   return "main";
 }
 
+/** Display form of a ref name, for messages the agent and the operator read. */
+export function displayRef(ref: string): string {
+  return ref.replace(/^refs\/remotes\//, "").replace(/^refs\/heads\//, "");
+}
+
+/**
+ * The ref this checkout's commits must reach before they count as shipped.
+ *
+ * The default branch has no branch of its own to push, so its measure is
+ * origin/<base>: whatever is not there yet is work still at risk. A feature
+ * branch is measured against its own upstream instead. Its commits are not on
+ * origin/<base> until the pull request merges, so measuring against base would
+ * report every open pull request as unshipped work forever — which is what
+ * makes the settle guard nag a session that already shipped.
+ */
+async function shippedRefFor(repoRoot: string, branch: string, base: string): Promise<string> {
+  const remoteBase = `refs/remotes/origin/${base}`;
+  const baseRef = (await tryGit(repoRoot, ["rev-parse", "--verify", "--quiet", remoteBase])) !== null
+    ? remoteBase
+    : `refs/heads/${base}`;
+  if (isProtectedBranch(branch, base)) return baseRef;
+  const upstream = (await tryGit(
+    repoRoot,
+    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+  ))?.trim();
+  if (upstream) return upstream;
+  const remoteBranch = `refs/remotes/origin/${branch}`;
+  return (await tryGit(repoRoot, ["rev-parse", "--verify", "--quiet", remoteBranch])) !== null
+    ? remoteBranch
+    : baseRef;
+}
+
 export async function readRepoState(cwd: string, options: { base?: string } = {}): Promise<RepoState | null> {
   const repoRoot = await repoRootFor(cwd);
   if (!repoRoot) return null;
@@ -100,12 +134,22 @@ export async function readRepoState(cwd: string, options: { base?: string } = {}
   const base = options.base?.trim() || await resolveBaseBranch(repoRoot);
   const status = (await tryGit(repoRoot, ["status", "--porcelain=v1", "-z"])) ?? "";
   const dirtyPaths = parsePorcelainPaths(status);
-  const aheadRaw = (await tryGit(repoRoot, ["rev-list", "--count", `refs/remotes/origin/${base}..HEAD`]))
-    ?? (await tryGit(repoRoot, ["rev-list", "--count", `refs/heads/${base}..HEAD`]));
+  const aheadOf = await shippedRefFor(repoRoot, branch, base);
+  const aheadRaw = await tryGit(repoRoot, ["rev-list", "--count", `${aheadOf}..HEAD`]);
   const ahead = Number.parseInt((aheadRaw ?? "0").trim(), 10) || 0;
   const originUrl = (await tryGit(repoRoot, ["remote", "get-url", "origin"]))?.trim() || null;
 
-  return { repoRoot, isWorktree, branch, headSha, base, ahead, dirtyPaths, originUrl };
+  return {
+    repoRoot,
+    isWorktree,
+    branch,
+    headSha,
+    base,
+    ahead,
+    aheadOf: displayRef(aheadOf),
+    dirtyPaths,
+    originUrl,
+  };
 }
 
 /** `agent/fix-login-page-a3f2` — short, lowercase, no punctuation git dislikes. */

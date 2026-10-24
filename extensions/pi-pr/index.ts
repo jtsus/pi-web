@@ -31,7 +31,10 @@ import * as gh from "./github";
 export const PULL_REQUEST_ENTRY_TYPE = "pi.pr";
 export const WORKTREE_ENTRY_TYPE = "pi.pr.worktree";
 export const PULL_REQUEST_GUARD_TYPE = "pi.pr.guard";
-/** Two nudges per run: enough to fix a lapse, few enough to never loop. */
+/**
+ * Hard cap per run. The fingerprint below already stops a gap from being
+ * repeated, so this only bounds a run whose work keeps changing state.
+ */
 export const MAX_GUARD_NUDGES = 2;
 
 export interface PullRequestLinkData {
@@ -152,13 +155,22 @@ async function ensurePull(
   }
   const subjects = await git.commitSubjects(repoRoot, base);
   const files = await git.changedFilesVsBase(repoRoot, base);
-  return gh.createPull(repo, {
-    title: options.title?.trim() || subjects[0] || branch,
-    head: branch,
-    base,
-    body: options.body?.trim() || autoBody(repo, base, subjects, files),
-    draft: options.draft,
-  });
+  try {
+    return await gh.createPull(repo, {
+      title: options.title?.trim() || subjects[0] || branch,
+      head: branch,
+      base,
+      body: options.body?.trim() || autoBody(repo, base, subjects, files),
+      draft: options.draft,
+    });
+  } catch (error) {
+    // GitHub rejects a second pull request for the same head with 422. Another
+    // session may have opened it between the lookup above and this call, so use
+    // that one instead of reporting a failure the agent would retry.
+    const raced = await gh.findOpenPull(repo, branch).catch(() => null);
+    if (raced) return raced;
+    throw error;
+  }
 }
 
 function linkFor(
@@ -319,7 +331,7 @@ export async function shipWork(cwd: string, options: ShipOptions = {}): Promise<
     }
   }
 
-  return { ok: true, text: `Nothing to ship: ${primary.state.branch} is clean and level with origin/${primary.state.base}.` };
+  return { ok: true, text: `Nothing to ship: ${primary.state.branch} is clean and level with ${primary.state.aheadOf}.` };
 }
 
 export interface WorktreeProgress {
@@ -360,6 +372,8 @@ export interface WorkGap {
   needsShipping: boolean;
   reasons: string[];
   branch?: string;
+  /** HEAD of the checkout the gap was read from, so a repeat nudge can tell. */
+  headSha?: string;
   repoRoot?: string;
   base?: string;
 }
@@ -400,15 +414,25 @@ export async function inspectionGap(cwd: string, options: GapOptions = {}): Prom
       );
     }
     if (state.ahead > 0) {
-      reasons.push(`${state.ahead} commit(s) on ${state.state.branch} are not on origin/${state.state.base}`);
+      reasons.push(`${state.ahead} commit(s) on ${state.state.branch} are not pushed to ${state.state.aheadOf}`);
     }
     if (state.dirty.length || state.ahead > 0) return;
     if (git.isProtectedBranch(state.state.branch, state.state.base)) return;
     if (!(await git.branchPublished(state.state.repoRoot, state.state.branch))) return;
     const remote = gh.parseRepoRemote(state.state.originUrl);
     if (!remote || remote.host !== "github.com" || !gh.resolveToken()) return;
-    const pull = await gh.findOpenPull(remote.repo, state.state.branch).catch(() => null);
-    if (!pull) reasons.push(`branch ${state.state.branch} has no open pull request`);
+    // Any pull request for the branch counts, open or not. A merged one put the
+    // work on the base branch and a closed one was a reviewer's decision, so
+    // neither is work still waiting to be shipped. A failed lookup is neither:
+    // a rate-limited or offline API must not read as "no pull request", or
+    // every parallel session would be sent to open one more.
+    let pull: Awaited<ReturnType<typeof gh.findPullForBranch>>;
+    try {
+      pull = await gh.findPullForBranch(remote.repo, state.state.branch);
+    } catch {
+      return;
+    }
+    if (!pull) reasons.push(`branch ${state.state.branch} has no pull request`);
   };
 
   await check(primaryTarget ?? { path: cwd }, true);
@@ -425,9 +449,19 @@ export async function inspectionGap(cwd: string, options: GapOptions = {}): Prom
     needsShipping: reasons.length > 0,
     reasons,
     branch: primary.state.branch,
+    headSha: primary.state.headSha,
     repoRoot: primary.state.repoRoot,
     base: primary.state.base,
   };
+}
+
+/**
+ * Identity of a gap, so the guard can tell "still the same unshipped work" from
+ * "something changed". Repeating an identical nudge cannot help: the agent was
+ * already told, and nothing it could do has changed since.
+ */
+export function gapFingerprint(gap: WorkGap): string {
+  return [gap.branch ?? "", gap.headSha ?? "", ...gap.reasons].join("\u0000");
 }
 
 export function guardMessage(gap: WorkGap): string {
@@ -531,11 +565,13 @@ export function recordedShips(ctx: ExtensionContext): {
       });
     }
   }
-  const opened = new Set(links.map((link) => `${link.repo}:${link.branch ?? ""}`));
+  const opened = new Set(links.map((link) => link.branch ?? ""));
   return {
     links,
-    // A branch that later got its pull request is no longer pending.
-    pending: pending.filter((entry) => !opened.has(`${entry.repo}:${entry.branch}`)),
+    // A branch that later got its pull request is no longer pending. Matching on
+    // the branch alone keeps an entry from staying pending when its recorded
+    // repo name is missing.
+    pending: pending.filter((entry) => !opened.has(entry.branch)),
     worktrees,
   };
 }
@@ -588,13 +624,15 @@ async function statusText(ctx: ExtensionContext): Promise<string> {
     `Repository: ${state.repoRoot}${state.isWorktree ? " (worktree)" : ""}`,
     `Branch: ${state.branch} (base origin/${state.base})`,
     `Uncommitted files: ${state.dirtyPaths.length}`,
-    `Commits ahead of origin/${state.base}: ${state.ahead}`,
+    `Commits not pushed to ${state.aheadOf}: ${state.ahead}`,
   ];
   return [...lines, ...statusTextForShips(ctx, recordedShips(ctx))].join("\n");
 }
 
 export default function piPrExtension(pi: ExtensionAPI) {
   const nudges = new Map<string, number>();
+  /** Fingerprint of the gap each session was last nudged about. */
+  const nudged = new Map<string, string>();
   const touched = new Map<string, string[]>();
   const baseline = new Map<string, { repoRoot: string; paths: Set<string> }>();
 
@@ -620,6 +658,7 @@ export default function piPrExtension(pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     nudges.clear();
+    nudged.clear();
     touched.clear();
     baseline.clear();
     await captureBaseline(ctx);
@@ -683,6 +722,13 @@ export default function piPrExtension(pi: ExtensionAPI) {
       return;
     }
     if (!gap.needsShipping) return;
+
+    // Across runs the budget resets, so an unchanged gap would be nudged again
+    // on every turn of a session that is already shipped. Only a gap that
+    // differs from the last nudge is worth another message.
+    const fingerprint = gapFingerprint(gap);
+    if (nudged.get(sessionId) === fingerprint) return;
+    nudged.set(sessionId, fingerprint);
 
     nudges.set(sessionId, (nudges.get(sessionId) ?? 0) + 1);
     return {

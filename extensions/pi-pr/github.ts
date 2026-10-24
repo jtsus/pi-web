@@ -161,6 +161,30 @@ export async function findOpenPull(repo: string, branch: string): Promise<PullIn
   return open.find((pull) => pull.head?.ref === branch) ?? null;
 }
 
+/**
+ * The pull request a branch has, whatever its state.
+ *
+ * A merged pull request means the work reached the base branch; a closed one
+ * was a reviewer's decision. Either way the branch's work has a home, and
+ * asking the agent for another pull request would only duplicate one a human
+ * already handled. `findOpenPull` stays the one `ensurePull` uses, because a
+ * closed pull request cannot be reused for new commits.
+ *
+ * Unlike `findOpenPull`, a failure here is thrown, not read as "no pull
+ * request": a rate-limited or offline API is not evidence that a branch has no
+ * pull request, and a caller that guesses puts the agent back to work on one.
+ */
+export async function findPullForBranch(repo: string, branch: string): Promise<PullInfo | null> {
+  const pulls = await request<PullInfo[]>(
+    `/repos/${repo}/pulls?state=all&head=${encodeURIComponent(branch)}&per_page=30`,
+  );
+  const matching = pulls.filter((pull) => pull.head?.ref === branch);
+  return matching.find((pull) => pull.state === "open")
+    ?? matching.find((pull) => pull.merged)
+    ?? matching[0]
+    ?? null;
+}
+
 export async function createPull(
   repo: string,
   input: { title: string; head: string; base: string; body: string; draft?: boolean },
