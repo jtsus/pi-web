@@ -352,6 +352,15 @@ export async function mergePull(
   };
 }
 
+export async function closePull(repo: string, number: number): Promise<{ closed: boolean }> {
+  const result = await githubRequest<{ state?: string }>(`/repos/${repo}/pulls/${number}`, {
+    method: "PATCH",
+    body: JSON.stringify({ state: "closed" }),
+  });
+  cache().clear();
+  return { closed: result.state === "closed" };
+}
+
 export interface CreatePullRequestInput {
   title: string;
   head: string;

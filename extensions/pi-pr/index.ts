@@ -661,6 +661,22 @@ export default function piPrExtension(pi: ExtensionAPI) {
     nudged.clear();
     touched.clear();
     baseline.clear();
+    // Every session starts from current main. The main checkout is read-only by
+    // convention (work happens in worktrees), so a forced reset here cannot
+    // discard anyone's work in progress.
+    try {
+      const root = await git.repoRootFor(ctx.cwd);
+      if (root) {
+        const moved = await git.resetToOriginMain(root);
+        if (!moved.ok) {
+          console.error(`[pi-pr] could not start from main: ${moved.error ?? "unknown"}`);
+        } else if (moved.from !== moved.to) {
+          console.error(`[pi-pr] session started from ${moved.from}, now on ${moved.to}`);
+        }
+      }
+    } catch (error) {
+      console.error(`[pi-pr] reset to main failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
     await captureBaseline(ctx);
   });
   pi.on("agent_start", () => { nudges.clear(); });

@@ -310,3 +310,24 @@ export async function changedFilesVsBase(repoRoot: string, base: string, limit =
   const diff = await tryGit(repoRoot, ["diff", "--name-only", `${ref}...HEAD`]);
   return (diff ?? "").split("\n").map((line) => line.trim()).filter(Boolean).slice(0, limit);
 }
+
+/**
+ * Put this checkout on a freshly fetched origin/<base>, discarding whatever was
+ * there. Sessions are meant to start from current main: the main checkout is
+ * read-only by convention and real work happens in a worktree, so resetting it
+ * cannot destroy someone's uncommitted work.
+ */
+export async function resetToOriginMain(
+  repoRoot: string,
+  base = "main",
+): Promise<{ ok: boolean; from: string; to: string; error?: string }> {
+  const from = (await tryGit(repoRoot, ["rev-parse", "--abbrev-ref", "HEAD"]))?.trim() || "unknown";
+  const fetched = await tryGit(repoRoot, ["fetch", "--prune", "origin"]);
+  if (fetched === null) return { ok: false, from, to: from, error: "git fetch failed" };
+  const sha = (await tryGit(repoRoot, ["rev-parse", "--verify", "--quiet", `origin/${base}`]))?.trim();
+  if (!sha) return { ok: false, from, to: from, error: `origin/${base} not found` };
+  const out = await tryGit(repoRoot, ["checkout", "-f", "-B", base, `origin/${base}`]);
+  if (out === null) return { ok: false, from, to: from, error: `checkout ${base} failed` };
+  const now = (await tryGit(repoRoot, ["rev-parse", "--abbrev-ref", "HEAD"]))?.trim() || base;
+  return { ok: true, from, to: now };
+}
