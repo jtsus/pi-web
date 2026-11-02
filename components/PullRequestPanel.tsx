@@ -166,16 +166,23 @@ export function PullRequestDetailView({
   busy,
   onBack,
   onMerge,
+  onClosePr,
+  onMergeStaging,
+  onRevertStaging,
   t,
 }: {
   detail: PullRequestDetail;
   busy: boolean;
   onBack: () => void;
   onMerge: (method: PullRequestMergeMethod) => void;
+  onClosePr?: () => void;
+  onMergeStaging?: () => void;
+  onRevertStaging?: () => void;
   t: (key: string, params?: Record<string, string | number>) => string;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [confirming, setConfirming] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<null | "close" | "staging" | "revert">(null);
 
   const toggle = (filename: string) => {
     setExpanded((current) => {
@@ -266,6 +273,76 @@ export function PullRequestDetailView({
             </button>
           )}
         </div>
+
+        {onMergeStaging || onRevertStaging || onClosePr ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+            {confirmAction ? (
+              <>
+                <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                  {confirmAction === "close"
+                    ? t("prs.closeConfirm")
+                    : confirmAction === "staging"
+                      ? t("prs.stagingConfirm")
+                      : t("prs.revertConfirm")}
+                </span>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    const action = confirmAction;
+                    setConfirmAction(null);
+                    if (action === "close") onClosePr?.();
+                    else if (action === "staging") onMergeStaging?.();
+                    else if (action === "revert") onRevertStaging?.();
+                  }}
+                  style={{ fontSize: 12, padding: "4px 10px", borderRadius: 5, border: "1px solid var(--accent)", background: "var(--accent)", color: "var(--accent-contrast)", cursor: busy ? "wait" : "pointer" }}
+                >
+                  {t("prs.confirm")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmAction(null)}
+                  style={{ fontSize: 12, padding: "4px 10px", borderRadius: 5, border: "1px solid var(--border)", background: "none", color: "var(--text-muted)", cursor: "pointer" }}
+                >
+                  {t("prs.cancel")}
+                </button>
+              </>
+            ) : (
+              <>
+                {onMergeStaging ? (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setConfirmAction("staging")}
+                    style={{ fontSize: 12, padding: "4px 10px", borderRadius: 5, border: "1px solid var(--border)", background: "none", color: "var(--text)", cursor: busy ? "wait" : "pointer" }}
+                  >
+                    {t("prs.mergeToStaging")}
+                  </button>
+                ) : null}
+                {onRevertStaging ? (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setConfirmAction("revert")}
+                    style={{ fontSize: 12, padding: "4px 10px", borderRadius: 5, border: "1px solid var(--border)", background: "none", color: "var(--warning, #d29922)", cursor: busy ? "wait" : "pointer" }}
+                  >
+                    {t("prs.revertFromStaging")}
+                  </button>
+                ) : null}
+                {onClosePr ? (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setConfirmAction("close")}
+                    style={{ fontSize: 12, padding: "4px 10px", borderRadius: 5, border: "1px solid var(--border)", background: "none", color: "var(--danger, #d1242f)", cursor: busy ? "wait" : "pointer" }}
+                  >
+                    {t("prs.close")}
+                  </button>
+                ) : null}
+              </>
+            )}
+          </div>
+        ) : null}
 
         {detail.body?.trim() ? (
           <div style={{ fontSize: 13, color: "var(--text)", marginBottom: 14 }}>
@@ -513,6 +590,75 @@ export function PullRequestPanel({ sessionId, cwd, active }: Props) {
     }
   }, [detail, load, t]);
 
+  /** Close without merging. */
+  const closePr = useCallback(async () => {
+    if (!detail) return;
+    setMerging(true);
+    setNotice(null);
+    try {
+      const response = await fetch(`/api/prs/${detail.number}/close`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repo: detail.repo }),
+      });
+      const result = await readJson<{ closed?: boolean; error?: string }>(response);
+      if (result.closed) {
+        setNotice(t("prs.closed"));
+        setOpenNumber(null);
+        setDetail(null);
+        await load();
+      } else {
+        setNotice(result.error || t("prs.closeFailed"));
+      }
+    } catch (closeError) {
+      setNotice(closeError instanceof Error ? closeError.message : String(closeError));
+    } finally {
+      setMerging(false);
+    }
+  }, [detail, load, t]);
+
+  /** Merge the pull request's head commit into staging, as a real merge commit. */
+  const mergeStaging = useCallback(async () => {
+    if (!detail || !cwd) return;
+    setMerging(true);
+    setNotice(null);
+    try {
+      const response = await fetch(`/api/prs/${detail.number}/staging`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repo: detail.repo, cwd }),
+      });
+      const result = await readJson<{ merged?: boolean; mergeSha?: string; error?: string }>(response);
+      if (result.merged) setNotice(t("prs.mergedToStaging"));
+      else setNotice(result.error || t("prs.mergeFailed"));
+    } catch (mergeError) {
+      setNotice(mergeError instanceof Error ? mergeError.message : String(mergeError));
+    } finally {
+      setMerging(false);
+    }
+  }, [cwd, detail, t]);
+
+  /** Revert the recorded staging merge commit. */
+  const revertStaging = useCallback(async () => {
+    if (!detail || !cwd) return;
+    setMerging(true);
+    setNotice(null);
+    try {
+      const response = await fetch(`/api/prs/${detail.number}/staging`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repo: detail.repo, cwd }),
+      });
+      const result = await readJson<{ reverted?: boolean; error?: string }>(response);
+      if (result.reverted) setNotice(t("prs.revertedFromStaging"));
+      else setNotice(result.error || t("prs.revertFailed"));
+    } catch (revertError) {
+      setNotice(revertError instanceof Error ? revertError.message : String(revertError));
+    } finally {
+      setMerging(false);
+    }
+  }, [cwd, detail, t]);
+
   const prs = useMemo(() => data?.prs ?? [], [data]);
 
   if (openNumber !== null) {
@@ -529,6 +675,9 @@ export function PullRequestPanel({ sessionId, cwd, active }: Props) {
             busy={merging}
             onBack={() => { setOpenNumber(null); setDetail(null); setNotice(null); }}
             onMerge={(method) => { void merge(method); }}
+            onClosePr={() => { void closePr(); }}
+            onMergeStaging={cwd ? () => { void mergeStaging(); } : undefined}
+            onRevertStaging={cwd ? () => { void revertStaging(); } : undefined}
             t={t}
           />
         ) : (

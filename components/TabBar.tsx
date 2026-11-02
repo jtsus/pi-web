@@ -9,7 +9,7 @@ export interface Tab {
   id: string;
   label: string;
   filePath: string;
-  kind?: "terminal" | "agent" | "prs";
+  kind?: "terminal" | "agent" | "prs" | "deployments";
   /** Pinned tabs (the pull request list) stay put and have no close button. */
   pinned?: boolean;
   closing?: boolean;

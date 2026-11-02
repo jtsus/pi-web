@@ -76,6 +76,7 @@ import { PRESET_READ_ONLY, type ToolEntry } from "@/lib/tool-presets";
 import { getAgentsBadge, getSessionFamily } from "@/lib/session-family";
 import { getLastSettingsSection, settingsSectionRequiresProject, type SettingsSection } from "@/lib/settings-navigation";
 import { PullRequestPanel } from "./PullRequestPanel";
+import { DeploymentsPanel } from "./DeploymentsPanel";
 
 type SessionCopyField = "file" | "id" | "projectDir" | "gitBranch" | "gitWorktree";
 type AutoNameStatus =
@@ -87,6 +88,8 @@ type AutoNameStatus =
 const TOP_BAR_ICON_BUTTON_SIZE = 36;
 /** Pinned right-panel tab that lists the pull requests this chat's agent opened. */
 const PR_TAB_ID = "prs";
+/** Pinned right-panel tab that reports what is running in prod and staging. */
+const DEPLOYMENTS_TAB_ID = "deployments";
 const AGENT_PANEL_WIDTH = 420;
 // pi's built-in tools that never change a file; any other tool may (#1144).
 const READ_ONLY_TOOL_NAMES = new Set(PRESET_READ_ONLY);
@@ -546,6 +549,13 @@ export function AppShell() {
       label: translate("prs.tab"),
       filePath: translate("prs.tab"),
       kind: "prs" as const,
+      pinned: true,
+    },
+    {
+      id: DEPLOYMENTS_TAB_ID,
+      label: translate("deployments.tab"),
+      filePath: translate("deployments.tab"),
+      kind: "deployments" as const,
       pinned: true,
     },
     ...fileTabs,
@@ -2810,6 +2820,11 @@ export function AppShell() {
               sessionId={selectedSession?.id ?? null}
               cwd={activeCwd ?? null}
               active={rightPanelOpen && activeFileTabId === PR_TAB_ID}
+            />
+          ) : activeFileTabId === DEPLOYMENTS_TAB_ID ? (
+            <DeploymentsPanel
+              cwd={activeCwd ?? null}
+              active={rightPanelOpen && activeFileTabId === DEPLOYMENTS_TAB_ID}
             />
           ) : activeFileTab?.filePath ? (
             <FileViewer
