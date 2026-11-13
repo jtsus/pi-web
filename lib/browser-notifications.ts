@@ -37,13 +37,19 @@ export function shouldShowBrowserNotification(
 // where the server's awaiting-input snapshot shares it.
 export { isBlockingExtensionUiRequest };
 
+/** One browser notification per request id, whether it is parked on a person or not. */
+export function claimAttentionNotification(id: string, notifiedRequestIds: Set<string>): boolean {
+  if (notifiedRequestIds.has(id)) return false;
+  notifiedRequestIds.add(id);
+  return true;
+}
+
 export function claimExtensionAttentionNotification(
   request: ExtensionUiRequest,
   notifiedRequestIds: Set<string>,
 ): request is BlockingExtensionUiRequest {
-  if (!isBlockingExtensionUiRequest(request) || notifiedRequestIds.has(request.id)) return false;
-  notifiedRequestIds.add(request.id);
-  return true;
+  if (!isBlockingExtensionUiRequest(request)) return false;
+  return claimAttentionNotification(request.id, notifiedRequestIds);
 }
 
 function getBrowserEnvironment(): BrowserNotificationEnvironment {
