@@ -31,6 +31,7 @@ import { sendAgentCommand } from "@/lib/agent-client";
 import { getFileName } from "@/lib/file-paths";
 import { buildAtMentionText, buildFileAtMentionsText, buildFileLineMentionText } from "@/lib/file-fuzzy";
 import {
+  claimAttentionNotification,
   claimExtensionAttentionNotification,
   shouldShowBrowserNotification,
   showBrowserNotification,
@@ -65,7 +66,7 @@ import {
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
 } from "@/lib/panel-layout";
-import type { BlockingExtensionUiRequest, SessionInfo, SessionTreeNode } from "@/lib/types";
+import type { AskUserRequestEvent, BlockingExtensionUiRequest, SessionInfo, SessionTreeNode } from "@/lib/types";
 import type { McpErrorResponse, ProjectTrustStatus } from "@/lib/api-types";
 import type { ChatInputHandle } from "./ChatInput";
 import type { AgentEndInfo, NewSessionChoices } from "@/hooks/useAgentSession";
@@ -1066,18 +1067,23 @@ export function AppShell() {
     });
   }, [deliverSessionNotification, selectedSession, translate]);
 
-  const handleAttentionNeeded = useCallback((request: BlockingExtensionUiRequest) => {
+  const handleAttentionNeeded = useCallback((request: BlockingExtensionUiRequest | AskUserRequestEvent) => {
     if (selectedSession?.relation?.kind === "subagent") return;
     if (!shouldShowBrowserNotification()) return;
-    if (!claimExtensionAttentionNotification(request, notifiedAttentionRequestIdsRef.current)) return;
+    const isAskUser = request.type === "ask_user_request";
+    if (isAskUser
+      ? !claimAttentionNotification(request.id, notifiedAttentionRequestIdsRef.current)
+      : !claimExtensionAttentionNotification(request, notifiedAttentionRequestIdsRef.current)) return;
 
     deliverSessionNotification({
       targetSession: selectedSession,
       title: translate("i18n.attentionNeeded"),
-      body: request.method === "custom"
-        ? translate("i18n.extensionInputNeeded")
-        : request.title,
-      tag: `pi-extension-ui:${request.id}`,
+      body: isAskUser
+        ? request.heading ?? request.questions[0]?.question ?? translate("i18n.askUserNeeded")
+        : request.method === "custom"
+          ? translate("i18n.extensionInputNeeded")
+          : request.title,
+      tag: `pi-${isAskUser ? "ask-user" : "extension-ui"}:${request.id}`,
     });
   }, [deliverSessionNotification, selectedSession, translate]);
 

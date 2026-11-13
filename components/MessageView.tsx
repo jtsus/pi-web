@@ -22,10 +22,13 @@ import { skillExpansionToCommand } from "@/lib/slash-display";
 import type { SubagentToolDetails } from "@/lib/subagent-extension";
 import { CODEMODE_TOOL_NAME, codemodeCalls, codemodeScript, codemodeScriptPreview, stripCodemodeHeader } from "@/lib/codemode-view";
 import { CodemodeCallList } from "./CodemodeToolView";
+import { AskUserCardBody } from "./AskUserCard";
+import { readAskUserCard } from "@/lib/ask-user-ui";
 import { toolFieldsOfInput, type ToolField } from "@/lib/tool-fields";
 import { mcpToolLabel, prettyMcpResultText } from "@/lib/mcp-tool-display";
 import { streamRateKey, streamRateStart, streamTokensPerSecond, type StreamRateStart } from "@/lib/stream-token-rate";
 import { getTranscriptNotices } from "@/lib/transcript-notices";
+import { ASK_USER_TOOL_NAME } from "@/lib/types";
 import { TRANSCRIPT_NOTICE_WARNING_COLOR, transcriptNoticeText } from "@/components/TranscriptNotices";
 import type {
   AgentMessage,
@@ -1198,11 +1201,16 @@ function ToolCallBlock({ block, result, duration, onOpenSubagent }: { block: Too
   const codemode = codemodeCode === null ? null : { code: codemodeCode, ...codemodeCalls(result?.details) };
   // A running script's progress snapshot has calls but no content yet.
   const codemodeRunning = codemode !== null && result !== undefined && result.content.length === 0;
+  // An ask_user call, finished or still waiting: questions, options, answers. Its
+  // arguments never fall back to JSON, and its result is the card, not a summary line.
+  const askUserCard = block.toolName === ASK_USER_TOOL_NAME && !isStreamingInput && codemode === null
+    ? readAskUserCard(block.input, result?.details)
+    : null;
 
   // Flat arguments as rows instead of a JSON blob, unless the card has a view of
-  // its own (a write's file text, codemode, an applied patch). See `lib/tool-fields.ts`.
+  // its own (a write's file text, codemode, an applied patch, ask_user). See `lib/tool-fields.ts`.
   const toolFields =
-    !isStreamingInput && writtenFileText === null && codemode === null && patchFiles === null
+    !isStreamingInput && writtenFileText === null && codemode === null && patchFiles === null && askUserCard === null
       ? toolFieldsOfInput(block.input)
       : null;
 
@@ -1265,7 +1273,11 @@ function ToolCallBlock({ block, result, duration, onOpenSubagent }: { block: Too
           <span style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
             {isStreamingInput
               ? t("chat.generatingToolInput")
-              : (patchLabel ?? (codemode ? codemodeScriptPreview(codemode.code) : getToolPreview(block)))}
+              : (patchLabel ?? (codemode
+                ? codemodeScriptPreview(codemode.code)
+                : askUserCard
+                  ? askUserCard.summary || t("chat.askUserEyebrow")
+                  : getToolPreview(block)))}
           </span>
           {codemodeCallCount > 0 && (
             <span style={{ fontSize: 11, color: "var(--text-dim)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
@@ -1293,7 +1305,7 @@ function ToolCallBlock({ block, result, duration, onOpenSubagent }: { block: Too
       </div>
 
       {/* ── Expanded: input args (only when no richer view exists); a codemode script in place of its JSON ── */}
-      {expanded && (isStreamingInput || !isEditTool) && !patchFiles && (
+      {expanded && (isStreamingInput || !isEditTool) && !patchFiles && askUserCard === null && (
         toolFields ? (
           <div
             style={{
@@ -1329,6 +1341,13 @@ function ToolCallBlock({ block, result, duration, onOpenSubagent }: { block: Too
         <CodemodeCallList calls={codemode.calls} omitted={codemode.omitted} isError={isError} />
       )}
 
+      {/* ── Expanded: the questions an ask_user call asked, and what was answered ── */}
+      {expanded && askUserCard && (
+        <div style={{ borderTop: isError ? "1px solid rgba(248,113,113,0.25)" : "1px solid rgba(34,197,94,0.2)" }}>
+          <AskUserCardBody card={askUserCard} />
+        </div>
+      )}
+
       {/* ── Result images — always visible, independent of the collapsed details ── */}
       {resultImages.length > 0 && <ResultImages images={resultImages} isError={isError} />}
 
@@ -1347,7 +1366,7 @@ function ToolCallBlock({ block, result, duration, onOpenSubagent }: { block: Too
           isError={isError}
         />
       )}
-      {expanded && result && !patchFiles && !codemodeRunning && (
+      {expanded && result && !patchFiles && !codemodeRunning && (askUserCard === null || isError) && (
         resultDiff ? (
           <PairedDiffResult
             diff={resultDiff}
