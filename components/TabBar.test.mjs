@@ -44,3 +44,19 @@ test("overflowing tabs keep the whole 36px bar: the strip has no scrollbar", () 
     assert.equal(tab["align-items"], "center");
   }
 });
+
+test("the pinned pull request tab has no close button and keeps its icon", () => {
+  const tabs = [
+    { id: "prs", label: "PRs", filePath: "PRs", kind: "prs", pinned: true },
+    { id: "file:1", label: "app.ts", filePath: "/p/app.ts" },
+  ];
+  const html = renderToStaticMarkup(React.createElement(I18nProvider, null,
+    React.createElement(TabBar, { tabs, activeTabId: "prs", onSelectTab() {}, onCloseTab() {} })));
+  // Only the file tab offers a close button; the pinned one never does.
+  const closeLabels = [...html.matchAll(/aria-label="Close ([^"]*)"/g)].map((match) => match[1]);
+  assert.deepEqual(closeLabels, ["app.ts"]);
+  const pinnedTab = html.slice(html.indexOf('role="tab" aria-label="PRs"'), html.indexOf('role="tab" aria-label="app.ts"'));
+  assert.ok(pinnedTab.length > 0, "the pinned tab renders first");
+  assert.match(pinnedTab, /<svg/, "the pinned tab keeps an icon");
+  assert.equal(pinnedTab.includes("<button"), false, "no close button inside the pinned tab");
+});

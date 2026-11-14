@@ -1,0 +1,15 @@
+{
+  "name": "pi-pr",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Keeps agent work from getting lost: isolated worktrees, pushed branches, and a pull request for every code change.",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  }
+}

@@ -2,11 +2,19 @@
 
 [中文文档](./docs/README.zh-CN.md) | [日本語](./docs/README.ja.md) | [Русский](./docs/README.ru.md)
 
+> **This is a fork with pull requests.** Upstream Pi Web has no UI-slot or
+> plugin system and keeps Git-client features out of scope, so the PR tab lives
+> here. A **PRs** tab in the right panel lists the pull requests the current
+> chat's agent opened, with description, files, checks, a GitHub link, and a
+> merge button; the bundled `pi-pr` extension makes agents ship their work as a
+> branch plus pull request instead of leaving it uncommitted. See
+> [Pull requests in Pi Web](./docs/pull-requests.md).
+
 Local browser UI for the [pi coding agent](https://github.com/earendil-works/pi). Pi Web uses the same local configuration and session files as pi, so you can browse and resume conversations, run agent turns, configure models and resources, and inspect project files from a browser.
 
 **[Try the interactive demo →](https://agegr.github.io/pi-web/)** The real Pi Web UI runs entirely in your browser, with sample sessions, files and models. There is nothing to install; replies are pre-written and no model is called.
 
-![Pi Web displaying a pi session with structured Markdown, tool calls, and project navigation](https://raw.githubusercontent.com/agegr/pi-web/main/docs/screenshot2.png)
+![Pi Web displaying a pi session with structured Markdown, tool calls, and project navigation](https://raw.githubusercontent.com/jtsus/pi-web/main/docs/screenshot2.png)
 
 ## Features
 
@@ -14,6 +22,7 @@ Local browser UI for the [pi coding agent](https://github.com/earendil-works/pi)
 - **Two ways to branch**: **New session** creates an independent session file from an earlier message; **Edit from here** creates a branch inside the current session.
 - **Project file tools**: browse and upload files, inspect Git diffs, and preview source, Markdown, images, audio, PDFs, and DOCX files with automatic refresh.
 - **Git worktrees**: switch checkouts from the sidebar while keeping sessions from the same repository grouped together.
+- **Pull requests**: a pinned **PRs** tab lists the pull requests this chat's agent opened (or every open PR of the project), with diffs, checks, a GitHub link, and merge.
 - **Web-based configuration**: manage provider login and API keys, models, model tests, plugin packages, and skills without leaving Pi Web.
 - **English, Simplified Chinese, and Traditional Chinese UI**: Pi Web follows the browser language initially and provides a language switcher in the top bar.
 
@@ -22,7 +31,7 @@ Local browser UI for the [pi coding agent](https://github.com/earendil-works/pi)
 Pi Web requires Node.js 22.19.0 or newer. Check your version with `node --version`, then run:
 
 ```bash
-npx @agegr/pi-web@latest
+npx @misterkip/pi-web@latest
 ```
 
 The CLI opens a browser after the server is ready. If it does not, open [http://127.0.0.1:30141](http://127.0.0.1:30141). Pi Web listens only on `127.0.0.1` by default.
@@ -32,7 +41,7 @@ If no model provider is configured yet, open the **Models** panel to sign in or 
 To install the `pi-web` command globally:
 
 ```bash
-npm install -g @agegr/pi-web@latest
+npm install -g @misterkip/pi-web@latest
 pi-web
 ```
 
@@ -46,7 +55,7 @@ pi-web open [--port N]  # open a running server in the browser
 pi-web update [--check] # update a global npm install
 ```
 
-To update, run `pi-web stop`, then `pi-web update` (or run the same install command again). To uninstall, run `npm uninstall -g @agegr/pi-web`.
+To update, run `pi-web stop`, then `pi-web update` (or run the same install command again). To uninstall, run `npm uninstall -g @misterkip/pi-web`.
 
 ## Configuration
 
@@ -94,7 +103,7 @@ On macOS or Linux:
 HTTP_PROXY=http://127.0.0.1:7890 \
 HTTPS_PROXY=http://127.0.0.1:7890 \
 NO_PROXY=localhost,127.0.0.1 \
-npx @agegr/pi-web@latest
+npx @misterkip/pi-web@latest
 ```
 
 On Windows PowerShell:
@@ -103,7 +112,7 @@ On Windows PowerShell:
 $env:HTTP_PROXY = "http://127.0.0.1:7890"
 $env:HTTPS_PROXY = "http://127.0.0.1:7890"
 $env:NO_PROXY = "localhost,127.0.0.1"
-npx @agegr/pi-web@latest
+npx @misterkip/pi-web@latest
 ```
 
 ## Notes
@@ -148,7 +157,7 @@ Server-side Pi extensions with detached work can prevent automatic idle
 session eviction through the versioned global registry:
 
 ```js
-const liveness = globalThis[Symbol.for("@agegr/pi-web/session-liveness/v1")];
+const liveness = globalThis[Symbol.for("@misterkip/pi-web/session-liveness/v1")];
 const release = liveness?.version === 1
   ? liveness.register({
       name: "my-extension",

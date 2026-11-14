@@ -54,6 +54,7 @@ import { createPiWebBuiltinExtensions, createSubagentCodemodeExtension, createSu
 import type { McpHost } from "./mcp-host";
 import { mcpPromptPreparation, type McpCommandCandidate } from "./mcp-command";
 import { createReadOnlyMcpPolicyExtension, createSubagentMcpPolicyExtension } from "./mcp-read-only-policy";
+import { parseAskUserAnswers, preferPiWebAskUserExtension, type AskUserHost, type AskUserPromptOutcome, type AskUserPromptRequest } from "./ask-user";
 import { createSubagentSkillsBinding } from "./subagent-skills";
 import { isNestedToolExecutionEvent } from "./agent-event-wire";
 import { collectLiveAssistantNotices, readShowCacheMissNotices, withSessionPrices } from "./transcript-notices-server";
@@ -80,6 +81,14 @@ type AgentRunCompleteListener = (sessionId: string, sessionName: string | undefi
 type PendingUiResponse = {
   resolve: (response: ExtensionUiResponse) => void;
   cancel: () => void;
+};
+
+/** A question parked until the browser answers (lib/ask-user.ts). */
+type PendingAskUser = {
+  /** The request the client re-reads after a reconnect, like a pending extension UI request. */
+  event: AgentEvent;
+  request: AskUserPromptRequest;
+  finish: (outcome: AskUserPromptOutcome) => void;
 };
 
 type CustomUiComponent = {
@@ -220,6 +229,7 @@ const COMMANDS_ALLOWED_DURING_SESSION_REPLACEMENT = new Set([
   "get_commands",
   "extension_ui_response",
   "extension_ui_input",
+  "ask_user_response",
 ]);
 
 export interface RpcSessionStartOptions {
@@ -309,6 +319,7 @@ export class AgentSessionWrapper {
   private activeToolEvents = new Map<string, AgentEvent>();
   private pendingUiResponses = new Map<string, PendingUiResponse>();
   private pendingUiRequests = new Map<string, AgentEvent>();
+  private pendingAskUsers = new Map<string, PendingAskUser>();
   private activeCustomUis = new Map<string, ActiveCustomUi>();
   private extensionUiAbortController = new AbortController();
   private extensionStatuses = new Map<string, string>();
@@ -404,6 +415,7 @@ export class AgentSessionWrapper {
    */
   isAwaitingInput(): boolean {
     if (!this.isRunning()) return false;
+    if (this.pendingAskUsers.size > 0) return true;
     for (const request of this.pendingUiRequests.values()) {
       if (isBlockingExtensionUiRequest(request as unknown as ExtensionUiRequest)) return true;
     }
@@ -757,7 +769,8 @@ export class AgentSessionWrapper {
 
   onEvent(listener: EventListener): () => void {
     this.listeners.add(listener);
-    for (const event of this.pendingUiRequests.values()) listener(event);
+    for (const request of this.pendingUiRequests.values()) listener(request);
+    for (const pending of this.pendingAskUsers.values()) listener(pending.event);
     for (const event of this.activeToolEvents.values()) listener(event);
     return () => {
       this.listeners.delete(listener);
@@ -1337,6 +1350,11 @@ export class AgentSessionWrapper {
         return null;
       }
 
+      case "ask_user_response": {
+        this.resolveAskUserResponse(command);
+        return null;
+      }
+
       case "set_auto_retry": {
         this.inner.setAutoRetryEnabled(command.enabled as boolean);
         return null;
@@ -1407,6 +1425,7 @@ export class AgentSessionWrapper {
     if (this.inner.isBashRunning) this.inner.abortBash();
     this.unsubscribe?.();
     for (const pending of this.pendingUiResponses.values()) pending.cancel();
+    for (const pending of this.pendingAskUsers.values()) pending.finish({ kind: "cancelled" });
     for (const id of Array.from(this.activeCustomUis.keys())) this.closeCustomUi(id, undefined);
     this.pendingUiResponses.clear();
     this.pendingUiRequests.clear();
@@ -1515,6 +1534,63 @@ export class AgentSessionWrapper {
     const pending = this.pendingUiResponses.get(response.id);
     if (!pending) return;
     pending.resolve(response);
+  }
+
+  /**
+   * The `ask_user` tool's wait: send the question over the session's stream, park
+   * the run like an extension dialog, and settle on the browser's answer, Stop, the
+   * request's timeout, or teardown. `onEvent()` replays it after a reconnect.
+   */
+  async askUser(request: AskUserPromptRequest, toolSignal?: AbortSignal): Promise<AskUserPromptOutcome> {
+    const stopSignal = this.extensionUiAbortController.signal;
+    const signal = toolSignal ? AbortSignal.any([toolSignal, stopSignal]) : stopSignal;
+    if (!this._alive || signal.aborted) return { kind: "cancelled" };
+
+    const id = randomUUID();
+    const event: AgentEvent = {
+      type: "ask_user_request",
+      id,
+      questions: request.questions,
+      allowComment: request.allowComment,
+      contextExpanded: request.contextExpanded,
+      ...(request.heading ? { heading: request.heading } : {}),
+      ...(request.expiresAt !== undefined ? { expiresAt: request.expiresAt } : {}),
+    };
+
+    return new Promise<AskUserPromptOutcome>((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let settled = false;
+      const finish = (outcome: AskUserPromptOutcome) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        signal.removeEventListener("abort", onAbort);
+        this.pendingAskUsers.delete(id);
+        this.emit({ type: "ask_user_closed", id });
+        resolve(outcome);
+      };
+      const onAbort = () => finish({ kind: "cancelled" });
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (request.expiresAt !== undefined) {
+        timer = setTimeout(onAbort, Math.max(0, request.expiresAt - Date.now()));
+        timer.unref?.();
+      }
+      this.pendingAskUsers.set(id, { event, request, finish });
+      this.emit(event);
+    });
+  }
+
+  /** An answer command for a question this wrapper still holds. */
+  private resolveAskUserResponse(command: Record<string, unknown>): void {
+    const id = typeof command.id === "string" ? command.id : "";
+    const pending = this.pendingAskUsers.get(id);
+    if (!pending) throw new Error("ask_user request is no longer waiting for an answer");
+    if (command.cancelled === true) {
+      pending.finish({ kind: "cancelled" });
+      return;
+    }
+    const answers = parseAskUserAnswers(command.answers, pending.request.questions);
+    pending.finish({ kind: "answered", answers });
   }
 
   private getExtensionStatuses(): Array<{ key: string; text: string }> {
@@ -2550,10 +2626,15 @@ export async function startRpcSession(
     const exactSystemPromptRef: { current?: () => string } = {};
     const exactSystemPromptExtension = createExactSystemPromptExtension(() => exactSystemPromptRef.current?.());
     // codemode, tool-search, and mcp, as the pi CLI loads them, and the host that decides
-    // which MCP servers the session connects (ADR 0006).
+    // which MCP servers the session connects (ADR 0006). The native ask_user tool asks
+    // through the wrapper created below, once it exists.
+    const askUserRef: { current?: AgentSessionWrapper } = {};
+    const askUserHost: AskUserHost = (request, signal) => askUserRef.current
+      ? askUserRef.current.askUser(request, signal)
+      : Promise.resolve({ kind: "cancelled" });
     const builtins = subagentResources || chatOnly
       ? undefined
-      : await createPiWebBuiltinExtensions({ agentDir });
+      : await createPiWebBuiltinExtensions({ agentDir, askUser: askUserHost });
     const subagentCodemode = subagentResources?.codemode
       ? await createSubagentCodemodeExtension({
           agentDir,
@@ -2618,7 +2699,7 @@ export async function startRpcSession(
                 isBuiltInSubagentsEnabled,
               ),
             ],
-            extensionsOverride: (base) => preferUserBashExtension(preferPiWebSubagentExtension(base)),
+            extensionsOverride: (base) => preferPiWebAskUserExtension(preferUserBashExtension(preferPiWebSubagentExtension(base))),
           },
       ...(trustReloadOptions ? { resourceLoaderReloadOptions: trustReloadOptions } : {}),
     });
@@ -2748,6 +2829,7 @@ export async function startRpcSession(
       ...(mcpHost ? { mcpHost } : {}),
       ...(chatOnlyExtensionModel ? { chatOnlyExtensionModel } : {}),
     });
+    askUserRef.current = wrapper;
     const realSessionId = inner.sessionId as string;
     registerRpcWrapper(wrapper);
 

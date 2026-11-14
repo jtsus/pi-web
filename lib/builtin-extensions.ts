@@ -14,6 +14,7 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { McpHost, type McpHostOptions } from "./mcp-host";
+import { createAskUserExtension, type AskUserHost } from "./ask-user";
 import { createPiWebMcpTransportFactory } from "./mcp-transport";
 import { loadPiSdkInternals, type PiSdkInternals, type PiSdkInternalsResult } from "./pi-sdk-internals";
 import { mayReadProjectConfigNow } from "./project-trust";
@@ -451,6 +452,8 @@ export interface PiWebBuiltinExtensionsOptions {
   agentDir: string;
   /** Timing overrides for tests. */
   mcpHost?: Pick<McpHostOptions, "idleMs" | "promptWaitMs">;
+  /** Where the native `ask_user` tool gets its answer (lib/ask-user.ts); without one it is not offered. */
+  askUser?: AskUserHost;
 }
 
 export interface PiWebBuiltinExtensions {
@@ -471,7 +474,13 @@ export async function createPiWebBuiltinExtensions(
     ...(options.mcpHost ? { mcpHost: options.mcpHost } : {}),
   });
   return {
-    extensions: [builtin("codemode", sandbox.available ? createCodemodeExtension() : unavailableExtension), ...extensions],
+    extensions: [
+      builtin("codemode", sandbox.available ? createCodemodeExtension() : unavailableExtension),
+      ...extensions,
+      // Not a CLI built-in: the host's own ask_user, which the chat draws
+      // (lib/ask-user.ts). Hidden, like the subagent extension.
+      ...(options.askUser ? [createAskUserExtension(options.askUser)] : []),
+    ],
     mcpHost,
   };
 }

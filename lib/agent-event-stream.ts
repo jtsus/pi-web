@@ -266,6 +266,11 @@ export function createAgentEventStream(
             pendingExtensionUiIds: bufferedEvents
               .filter((event) => event.type === "extension_ui_request" && typeof event.id === "string")
               .map((event) => event.id as string),
+            // The native ask_user requests hold the run too; both replayed above, so
+            // a reconnecting client drops the ones answered while it was away.
+            pendingAskUserIds: bufferedEvents
+              .filter((event) => event.type === "ask_user_request" && typeof event.id === "string")
+              .map((event) => event.id as string),
           });
           for (const event of bufferedEvents) forwardEvent(event, snapshot);
           if (snapshot !== undefined && snapshot !== null) {

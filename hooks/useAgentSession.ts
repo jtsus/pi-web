@@ -3,6 +3,8 @@
 import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo, useReducer } from "react";
 import type {
   AgentMessage,
+  AskUserAnswer,
+  AskUserRequestEvent,
   BlockingExtensionUiRequest,
   ExtensionStatusItem,
   ExtensionUiRequest,
@@ -191,7 +193,7 @@ export interface UseAgentSessionOptions {
   onAgentEnd?: (end: AgentEndInfo) => void;
   /** A top-level tool call finished; the files it touched may have changed. */
   onToolEnd?: (toolName: string) => void;
-  onAttentionNeeded?: (request: BlockingExtensionUiRequest) => void;
+  onAttentionNeeded?: (request: BlockingExtensionUiRequest | AskUserRequestEvent) => void;
   onSessionCreated?: (session: SessionInfo, sourceDraftKey: string) => void;
   onSessionForked?: (newSessionId: string) => void;
   modelsRefreshKey?: number;
@@ -428,6 +430,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [sessionStatsOverride, setSessionStatsOverride] = useState<SessionStatsInfo | null>(null);
   const [extensionDialogs, setExtensionDialogs] = useState<ExtensionUiDialogRequest[]>([]);
   const [extensionCustomUis, setExtensionCustomUis] = useState<ExtensionUiCustomRequest[]>([]);
+  // Pi Web's own ask_user prompt (lib/ask-user.ts): the questions the chat draws.
+  const [askUserRequests, setAskUserRequests] = useState<AskUserRequestEvent[]>([]);
   const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
   const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessages>({ steering: [], followUp: [] });
@@ -1145,7 +1149,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // grace while hidden. A run that settles while hidden starts the grace again,
   // which also covers extension follow-ups right after prompt_done.
   const eventStreamIdle = !agentRunning && !bashRunning && !isCompacting
-    && extensionDialogs.length === 0 && extensionCustomUis.length === 0;
+    && extensionDialogs.length === 0 && extensionCustomUis.length === 0
+    && askUserRequests.length === 0;
   useEffect(() => {
     const sid = session?.id;
     if (!sid || !eventStreamIdle) return;
@@ -1222,6 +1227,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } catch (e) {
       console.error("Failed to send extension custom UI input:", e);
     }
+  }, []);
+
+  /**
+   * Answer (or dismiss) Pi Web's ask_user prompt. The request stays queued until
+   * the server accepts the command, so a failed send keeps the drafts on screen;
+   * on success the request has settled there and the queue drops it at once.
+   */
+  const respondToAskUser = useCallback(async (
+    request: AskUserRequestEvent,
+    response: { answers: AskUserAnswer[] } | { cancelled: true },
+  ) => {
+    const sid = sessionIdRef.current;
+    if (!sid) throw new Error("Session is not selected");
+    await sendAgentCommand(sid, { type: "ask_user_response", id: request.id, ...response });
+    setAskUserRequests((queue) => removeExtensionUiRequest(queue, request.id));
   }, []);
 
   const addNotice = useCallback((notice: { id?: string; message: string; type?: NoticeType }) => {
@@ -1532,6 +1552,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           setExtensionDialogs((queue) => retainExtensionUiRequests(queue, pending));
           setExtensionCustomUis((queue) => retainExtensionUiRequests(queue, pending));
         }
+        if (Array.isArray(event.pendingAskUserIds)) {
+          const pending = new Set(event.pendingAskUserIds as string[]);
+          setAskUserRequests((queue) => retainExtensionUiRequests(queue, pending));
+        }
         if (event.isStreaming === true) {
           cancelEventStreamGrace();
           sdkAgentActiveRef.current = true;
@@ -1812,8 +1836,19 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       case "extension_ui_closed":
         setExtensionDialogs((queue) => removeExtensionUiRequest(queue, event.id as string));
         break;
+      case "ask_user_request": {
+        const request = event as unknown as AskUserRequestEvent;
+        // A replayed request (SSE reconnect) is the same id; the upsert keeps the
+        // prompt where it was, and AppShell claims the notification per id.
+        setAskUserRequests((queue) => upsertExtensionUiRequest(queue, request));
+        onAttentionNeeded?.(request);
+        break;
+      }
+      case "ask_user_closed":
+        setAskUserRequests((queue) => removeExtensionUiRequest(queue, event.id as string));
+        break;
     }
-  }, [addNotice, applyLiveUsage, cancelEventStreamGrace, dispatch, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, onToolEnd, refreshContextUsage, scheduleEventStreamClose, scrollToBottom, settleUiStage, syncLiveModel]);
+  }, [addNotice, applyLiveUsage, cancelEventStreamGrace, dispatch, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, onAttentionNeeded, onToolEnd, refreshContextUsage, scheduleEventStreamClose, scrollToBottom, settleUiStage, syncLiveModel]);
   handleAgentEventRef.current = handleAgentEvent;
 
   const handleSend = useCallback(async (message: string, images?: AttachedImage[]) => {
@@ -2523,6 +2558,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         // of leaving them queued in front of the new wrapper's.
         setExtensionDialogs([]);
         setExtensionCustomUis([]);
+        setAskUserRequests([]);
         sessionIdRef.current = activeSessionId;
         if (result?.recreated && sessionPropIdRef.current === activeSessionId) {
           maintainEventsConnected(activeSessionId);
@@ -2911,6 +2947,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const waitingExtensionDialogCount = Math.max(0, extensionDialogs.length - 1);
   const extensionCustomUi = extensionCustomUis[0] ?? null;
   const waitingExtensionCustomUiCount = Math.max(0, extensionCustomUis.length - 1);
+  const askUserRequest = askUserRequests[0] ?? null;
+  const waitingAskUserCount = Math.max(0, askUserRequests.length - 1);
   const messageKeys = useMemo(
     () => messageRenderKeys(entryIds, messages.length, messageKeyAliases),
     [entryIds, messages.length, messageKeyAliases],
@@ -2923,7 +2961,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, modelSwitching, sessionStats, autoCompactionEnabled,
     slashCommands, slashCommandsLoading, queuedMessages,
-    notices: noticeState.visible, extensionDialog, waitingExtensionDialogCount, extensionCustomUi, waitingExtensionCustomUiCount, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
+    notices: noticeState.visible, extensionDialog, waitingExtensionDialogCount, extensionCustomUi, waitingExtensionCustomUiCount, askUserRequest, waitingAskUserCount, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput, respondToAskUser,
     isAutoModelSelection: isNew && newSessionModel === null,
     isAutoThinkingSelection: isNew && newSessionThinkingLevel === null,
     defaultModel: newSessionDefaultModel,

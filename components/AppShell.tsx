@@ -31,6 +31,7 @@ import { sendAgentCommand } from "@/lib/agent-client";
 import { getFileName } from "@/lib/file-paths";
 import { buildAtMentionText, buildFileAtMentionsText, buildFileLineMentionText } from "@/lib/file-fuzzy";
 import {
+  claimAttentionNotification,
   claimExtensionAttentionNotification,
   shouldShowBrowserNotification,
   showBrowserNotification,
@@ -65,7 +66,7 @@ import {
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
 } from "@/lib/panel-layout";
-import type { BlockingExtensionUiRequest, SessionInfo, SessionTreeNode } from "@/lib/types";
+import type { AskUserRequestEvent, BlockingExtensionUiRequest, SessionInfo, SessionTreeNode } from "@/lib/types";
 import type { McpErrorResponse, ProjectTrustStatus } from "@/lib/api-types";
 import type { ChatInputHandle } from "./ChatInput";
 import type { AgentEndInfo, NewSessionChoices } from "@/hooks/useAgentSession";
@@ -75,6 +76,8 @@ import type { FileViewerState } from "@/lib/file-viewer-state";
 import { PRESET_READ_ONLY, type ToolEntry } from "@/lib/tool-presets";
 import { getAgentsBadge, getSessionFamily } from "@/lib/session-family";
 import { getLastSettingsSection, settingsSectionRequiresProject, type SettingsSection } from "@/lib/settings-navigation";
+import { PullRequestPanel } from "./PullRequestPanel";
+import { DeploymentsPanel } from "./DeploymentsPanel";
 
 type SessionCopyField = "file" | "id" | "projectDir" | "gitBranch" | "gitWorktree";
 type AutoNameStatus =
@@ -84,6 +87,10 @@ type AutoNameStatus =
   | { kind: "error"; message: string };
 
 const TOP_BAR_ICON_BUTTON_SIZE = 36;
+/** Pinned right-panel tab that lists the pull requests this chat's agent opened. */
+const PR_TAB_ID = "prs";
+/** Pinned right-panel tab that reports what is running in prod and staging. */
+const DEPLOYMENTS_TAB_ID = "deployments";
 const AGENT_PANEL_WIDTH = 420;
 // pi's built-in tools that never change a file; any other tool may (#1144).
 const READ_ONLY_TOOL_NAMES = new Set(PRESET_READ_ONLY);
@@ -538,6 +545,20 @@ export function AppShell() {
   // they are dropped when the project changes (they belong to its sessions).
   const [agentTabs, setAgentTabs] = useState<{ sessionId: string; label: string }[]>([]);
   const panelTabs: Tab[] = [
+    {
+      id: PR_TAB_ID,
+      label: translate("prs.tab"),
+      filePath: translate("prs.tab"),
+      kind: "prs" as const,
+      pinned: true,
+    },
+    {
+      id: DEPLOYMENTS_TAB_ID,
+      label: translate("deployments.tab"),
+      filePath: translate("deployments.tab"),
+      kind: "deployments" as const,
+      pinned: true,
+    },
     ...fileTabs,
     ...terminalTabs.map((tab) => ({
       id: tab.id,
@@ -1046,18 +1067,23 @@ export function AppShell() {
     });
   }, [deliverSessionNotification, selectedSession, translate]);
 
-  const handleAttentionNeeded = useCallback((request: BlockingExtensionUiRequest) => {
+  const handleAttentionNeeded = useCallback((request: BlockingExtensionUiRequest | AskUserRequestEvent) => {
     if (selectedSession?.relation?.kind === "subagent") return;
     if (!shouldShowBrowserNotification()) return;
-    if (!claimExtensionAttentionNotification(request, notifiedAttentionRequestIdsRef.current)) return;
+    const isAskUser = request.type === "ask_user_request";
+    if (isAskUser
+      ? !claimAttentionNotification(request.id, notifiedAttentionRequestIdsRef.current)
+      : !claimExtensionAttentionNotification(request, notifiedAttentionRequestIdsRef.current)) return;
 
     deliverSessionNotification({
       targetSession: selectedSession,
       title: translate("i18n.attentionNeeded"),
-      body: request.method === "custom"
-        ? translate("i18n.extensionInputNeeded")
-        : request.title,
-      tag: `pi-extension-ui:${request.id}`,
+      body: isAskUser
+        ? request.heading ?? request.questions[0]?.question ?? translate("i18n.askUserNeeded")
+        : request.method === "custom"
+          ? translate("i18n.extensionInputNeeded")
+          : request.title,
+      tag: `pi-${isAskUser ? "ask-user" : "extension-ui"}:${request.id}`,
     });
   }, [deliverSessionNotification, selectedSession, translate]);
 
@@ -1250,6 +1276,8 @@ export function AppShell() {
   };
 
   const handleCloseFileTab = useCallback((tabId: string) => {
+    // The pull request list is pinned: there is nothing to close it back to.
+    if (tabId === PR_TAB_ID) return;
     if (terminalTabs.some((tab) => tab.id === tabId)) {
       setTerminalTabs((tabs) => tabs.map((tab) => tab.id === tabId && !tab.closing ? { ...tab, closing: "close" } : tab));
       return;
@@ -2026,6 +2054,60 @@ export function AppShell() {
     );
   };
 
+  const handleOpenPullRequests = useCallback(() => {
+    if (isMobile) {
+      setSidebarOpen(false);
+      setActiveTopPanel(null);
+      setMobileToolbarMoreOpen(false);
+    }
+    // The button toggles the panel when the list is already the active tab.
+    const alreadyShowing = rightPanelOpen && activeFileTabId === PR_TAB_ID;
+    setActiveFileTabId(PR_TAB_ID);
+    setRightPanelOpen(!alreadyShowing);
+  }, [activeFileTabId, isMobile, rightPanelOpen]);
+
+  const renderPullRequestsToggle = (mobile: boolean) => {
+    const covered = mobile && isNarrowMobile && mobileToolbarMoreOpen;
+    const showing = rightPanelOpen && activeFileTabId === PR_TAB_ID;
+    return (
+      <button
+        type="button"
+        onClick={handleOpenPullRequests}
+        disabled={covered}
+        tabIndex={covered ? -1 : undefined}
+        aria-controls="file-panel"
+        aria-expanded={showing}
+        aria-hidden={covered ? true : undefined}
+        title={showing ? translate("prs.hidePanel") : translate("prs.showPanel")}
+        aria-label={showing ? translate("prs.hidePanel") : translate("prs.showPanel")}
+        data-mobile-toolbar-prs={mobile ? "true" : undefined}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: TOP_BAR_ICON_BUTTON_SIZE,
+          height: TOP_BAR_ICON_BUTTON_SIZE,
+          padding: 0,
+          visibility: covered ? "hidden" : "visible",
+          pointerEvents: covered ? "none" : "auto",
+          background: showing ? "var(--bg-selected)" : "none",
+          border: "none",
+          color: showing ? "var(--text)" : "var(--text-muted)",
+          cursor: "pointer",
+          flexShrink: 0,
+          transition: "color 0.12s, background 0.12s",
+        }}
+        onMouseEnter={(event) => { if (!covered) event.currentTarget.style.color = "var(--text)"; }}
+        onMouseLeave={(event) => { event.currentTarget.style.color = showing ? "var(--text)" : "var(--text-muted)"; }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="6" cy="18" r="2.5" /><circle cx="6" cy="6" r="2.5" /><circle cx="18" cy="18" r="2.5" />
+          <path d="M6 8.5v7M12 6h3a3 3 0 0 1 3 3v6.5" />
+        </svg>
+      </button>
+    );
+  };
+
   const renderMainFileToggle = (mobile: boolean) => {
     const covered = mobile && isNarrowMobile && mobileToolbarMoreOpen;
     return (
@@ -2276,6 +2358,7 @@ export function AppShell() {
               )}
               {!isNarrowMobile && renderChatToolbarActions(true)}
               {renderSessionStatsButton(true)}
+              {renderPullRequestsToggle(true)}
               {renderMainFileToggle(true)}
               {isNarrowMobile && mobileToolbarMoreOpen && (
                 <div
@@ -2309,6 +2392,7 @@ export function AppShell() {
               {renderSessionStatsButton(false)}
             </>
           )}
+          {!isMobile && renderPullRequestsToggle(false)}
           {!isMobile && renderMainFileToggle(false)}
           {isMobile && sessionHasBranches && (
             <BranchNavigator
@@ -2737,7 +2821,18 @@ export function AppShell() {
 
         {/* Only the active viewer is mounted. Lightweight per-tab state is restored on activation. */}
         <div style={{ flex: 1, minHeight: 0, overflow: "hidden", paddingBottom: "env(safe-area-inset-bottom)" }}>
-          {activeFileTab?.filePath ? (
+          {activeFileTabId === PR_TAB_ID ? (
+            <PullRequestPanel
+              sessionId={selectedSession?.id ?? null}
+              cwd={activeCwd ?? null}
+              active={rightPanelOpen && activeFileTabId === PR_TAB_ID}
+            />
+          ) : activeFileTabId === DEPLOYMENTS_TAB_ID ? (
+            <DeploymentsPanel
+              cwd={activeCwd ?? null}
+              active={rightPanelOpen && activeFileTabId === DEPLOYMENTS_TAB_ID}
+            />
+          ) : activeFileTab?.filePath ? (
             <FileViewer
               key={`${fileWorkspaceGeneration}:${activeFileTab.id}:${activeFileTab.viewerRevision ?? 0}`}
               filePath={activeFileTab.filePath}

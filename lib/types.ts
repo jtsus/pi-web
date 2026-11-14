@@ -220,6 +220,84 @@ export type BlockingExtensionUiRequest = Extract<
   { method: "select" | "confirm" | "input" | "editor" | "custom" }
 >;
 
+// ---------------------------------------------------------------------------
+// ask_user (Pi Web's own question tool, lib/ask-user.ts)
+// ---------------------------------------------------------------------------
+
+/** The tool both Pi Web and pi-ask-user register; client code gates its view on it. */
+export const ASK_USER_TOOL_NAME = "ask_user";
+
+/** One multiple-choice answer offered for a question. */
+export interface AskUserOption {
+  title: string;
+  description?: string;
+}
+
+/** A question as the browser shows it: options, multi-select, and a freeform field. */
+export interface AskUserQuestion {
+  question: string;
+  context?: string;
+  options: AskUserOption[];
+  allowMultiple: boolean;
+  allowFreeform: boolean;
+}
+
+/**
+ * A question waiting for the user in the chat. Not an `extension_ui_request`: the
+ * tool lives in Pi Web, so it carries the questions and the browser draws them,
+ * instead of a terminal render an extension would hand over.
+ */
+export interface AskUserRequestEvent {
+  type: "ask_user_request";
+  id: string;
+  /** The model's top-level `question` beside a `questions` batch, shown as its heading. */
+  heading?: string;
+  questions: AskUserQuestion[];
+  /** Offer the optional comment field under a selection answer. */
+  allowComment: boolean;
+  contextExpanded: boolean;
+  /** When the request auto-cancels, as the extension dialogs' `expiresAt`. */
+  expiresAt?: number;
+}
+
+/** The question was answered, cancelled, timed out, or the run was stopped. */
+export interface AskUserClosedEvent {
+  type: "ask_user_closed";
+  id: string;
+}
+
+/** One question's answer. `skipped` is accepted for batches; Pi Web's UI asks for all. */
+export type AskUserAnswer =
+  | { kind: "selection"; selections: string[]; comment?: string }
+  | { kind: "freeform"; text: string }
+  | { kind: "skipped" };
+
+/** The browser's reply to an ask_user request (`POST /api/agent/[id]`). */
+export type AskUserResponseCommand =
+  | { type: "ask_user_response"; id: string; answers: AskUserAnswer[] }
+  | { type: "ask_user_response"; id: string; cancelled: true };
+
+/** A single question's stored tool result details, as pi-ask-user records them too. */
+export interface AskUserToolDetails {
+  question: string;
+  context?: string;
+  options: AskUserOption[];
+  response: { kind: "selection"; selections: string[]; comment?: string } | { kind: "freeform"; text: string } | null;
+  cancelled: boolean;
+}
+
+/** A `questions` batch's stored tool result details, as pi-ask-user records them too. */
+export interface AskUserBatchDetails {
+  kind: "batch";
+  heading?: string;
+  questions: Array<{ question: string; context?: string; options: AskUserOption[] }>;
+  answers: Array<
+    | { status: "answered"; response: { kind: "selection"; selections: string[]; comment?: string } | { kind: "freeform"; text: string } }
+    | { status: "skipped" }
+  >;
+  cancelled: boolean;
+}
+
 export type ExtensionUiResponse =
   | { type: "extension_ui_response"; id: string; value: string }
   | { type: "extension_ui_response"; id: string; confirmed: boolean }
