@@ -214,3 +214,5 @@ See [AGENTS.md](./AGENTS.md) for the architecture notes and detailed file map.
 ## License
 
 [MIT](./LICENSE)
+
+<!-- merge prompt test 1794641080 -->
