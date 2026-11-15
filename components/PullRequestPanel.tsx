@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/hooks/useI18n";
+import { sendAgentCommand } from "@/lib/agent-client";
+import { buildPullRequestMergePrompt } from "@/lib/pr-merge-prompt";
 import { MarkdownBody } from "./MarkdownBody";
 import type {
   PullRequestDetail,
@@ -269,7 +271,7 @@ export function PullRequestDetailView({
                 opacity: busy || detail.mergeable === false ? 0.6 : 1,
               }}
             >
-              {busy ? t("prs.merging") : t("prs.merge")}
+              {busy ? t("prs.askingAgent") : t("prs.merge")}
             </button>
           )}
         </div>
@@ -564,31 +566,39 @@ export function PullRequestPanel({ sessionId, cwd, active }: Props) {
     }
   }, [sessionId]);
 
+  /**
+   * The merge is the chat's job, not the panel's: the agent sees the checks,
+   * runs the merge, and then watches the deploy that follows. The button asks
+   * that session, exactly as if the message had been typed there; the panel
+   * closes its detail so the run is visible and the list drops the PR once it
+   * is merged.
+   */
   const merge = useCallback(async (method: PullRequestMergeMethod) => {
     if (!detail) return;
+    if (!sessionId) {
+      setNotice(t("prs.mergeNeedsChat"));
+      return;
+    }
     setMerging(true);
     setNotice(null);
     try {
-      const response = await fetch(`/api/prs/${detail.number}/merge`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ repo: detail.repo, method }),
+      await sendAgentCommand(sessionId, {
+        type: "prompt",
+        message: buildPullRequestMergePrompt(detail, method),
+        // Merge now if the chat is free; otherwise join its queue rather than
+        // interrupting what it is already doing.
+        streamingBehavior: "followUp",
       });
-      const result = await readJson<{ merged: boolean; message: string }>(response);
-      if (result.merged) {
-        setNotice(t("prs.merged"));
-        setOpenNumber(null);
-        setDetail(null);
-        await load();
-      } else {
-        setNotice(result.message || t("prs.mergeFailed"));
-      }
+      setNotice(t("prs.mergeAskedAgent", { number: detail.number }));
+      setOpenNumber(null);
+      setDetail(null);
+      await load();
     } catch (mergeError) {
       setNotice(mergeError instanceof Error ? mergeError.message : String(mergeError));
     } finally {
       setMerging(false);
     }
-  }, [detail, load, t]);
+  }, [detail, load, sessionId, t]);
 
   /** Close without merging. */
   const closePr = useCallback(async () => {
