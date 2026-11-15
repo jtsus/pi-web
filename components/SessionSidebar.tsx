@@ -77,6 +77,7 @@ import {
 import { focusIfLost, type FocusDocument } from "@/lib/stacked-dialog";
 import { useFilesPlacement } from "@/hooks/useFilesPlacement";
 import { useI18n } from "@/hooks/useI18n";
+import { shouldFollowSessionCwd } from "@/lib/sidebar-cwd-sync";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useResizablePanel } from "@/hooks/useResizablePanel";
 import { useScrollbarVisibility } from "@/hooks/useScrollbarVisibility";
@@ -1071,23 +1072,39 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   }, [selectedCwd, onCwdChange, projectFor]);
 
   // Sync the worktree switcher to the selected session's cwd. Sessions of all
-  // worktrees in a project share one group, so clicking a session from another
-  // worktree should move the effective cwd there. Only fires when the prop
-  // value changes, so a manual switcher change is not snapped back. The prop
-  // goes null when the shell switches project from here; forgetting the last
-  // value then lets a restored session in a worktree that was synced before
-  // move the cwd again, so the files tab shows the checkout the chat uses.
+  // worktrees in a project share one group, and the shell selects them from
+  // more places than this list (the agents panel, a notification), so a change
+  // of selected session must move the effective cwd even when its path is the
+  // one already synced. Without the session half of this check, manually
+  // moving the switcher to another worktree and then switching to a session in
+  // the original one left the files view on the worktree the user had picked,
+  // not the one the chat runs in.
+  //
+  // A manual switcher change with the session unchanged is still not snapped
+  // back (the effect's dependencies do not change). The prop goes null when the
+  // shell switches project from here; forgetting both values then lets a
+  // restored session in a worktree that was synced before move the cwd again,
+  // so the files tab shows the checkout the chat uses.
   const lastSyncedCwdPropRef = useRef<string | null>(null);
+  const lastSyncedSessionIdRef = useRef<string | null>(selectedSessionId ?? null);
   useEffect(() => {
     if (!selectedCwdProp) {
       lastSyncedCwdPropRef.current = null;
+      lastSyncedSessionIdRef.current = selectedSessionId ?? null;
       return;
     }
-    if (selectedCwdProp !== lastSyncedCwdPropRef.current) {
+    const follow = shouldFollowSessionCwd({
+      propCwd: selectedCwdProp,
+      sessionId: selectedSessionId ?? null,
+      lastPropCwd: lastSyncedCwdPropRef.current,
+      lastSessionId: lastSyncedSessionIdRef.current,
+    });
+    if (follow) {
       lastSyncedCwdPropRef.current = selectedCwdProp;
+      lastSyncedSessionIdRef.current = selectedSessionId ?? null;
       setSelectedCwd(selectedCwdProp);
     }
-  }, [selectedCwdProp]);
+  }, [selectedCwdProp, selectedSessionId]);
 
   // Load worktrees for the current effective cwd
   const [wtRefreshKey, setWtRefreshKey] = useState(0);
